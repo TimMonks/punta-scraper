@@ -1,5 +1,6 @@
 services:
   digisnow-scraper:
+    image: ghcr.io/timmonks/punta-scraper:${APP_IMAGE_TAG:-latest}
     build: .
     container_name: digisnow-scraper
     restart: unless-stopped
@@ -16,3 +17,11 @@ services:
       - WEB_PASSWORD=${WEB_PASSWORD:-admin}
       - SECRET_KEY=${SECRET_KEY:-}
       - TZ=${TZ:-Europe/Paris}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - web
+
+networks:
+  web:
+    external: true

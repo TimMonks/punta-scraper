@@ -7,6 +7,47 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+
+def is_ha_addon() -> bool:
+    """Detect if running as a Home Assistant add-on."""
+    return os.environ.get("SUPERVISOR_TOKEN") is not None
+
+
+def get_ha_addon_options() -> dict:
+    """Read add-on options from /data/options.json (set by HA Supervisor)."""
+    options_path = Path("/data/options.json")
+    if options_path.exists():
+        try:
+            return json.loads(options_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def get_ha_mqtt_service() -> dict | None:
+    """Query HA Supervisor API for MQTT service credentials."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return None
+    try:
+        import requests
+        resp = requests.get(
+            "http://supervisor/services/mqtt",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+        if resp.ok:
+            data = resp.json().get("data", {})
+            return {
+                "host": data.get("host", ""),
+                "port": data.get("port", 1883),
+                "username": data.get("username", ""),
+                "password": data.get("password", ""),
+            }
+    except Exception as e:
+        log.warning("Failed to query HA MQTT service: %s", e)
+    return None
+
 DEFAULT_STATUS_MAPPING = {
     "open": "OPEN",
     "closed": "CLOSED",
@@ -44,10 +85,18 @@ DEFAULT_CONFIG = {
 
 class Config:
     def __init__(self, config_path: str = "app/data/config.json"):
+        self._ha_addon = is_ha_addon()
+        if self._ha_addon:
+            config_path = "/data/config.json"
+            log.info("Running as HA add-on")
         self._path = Path(config_path)
         self._lock = threading.Lock()
         self._data: dict[str, Any] = {}
         self._load()
+
+    @property
+    def ha_addon(self) -> bool:
+        return self._ha_addon
 
     def _load(self):
         if self._path.exists():
@@ -69,6 +118,11 @@ class Config:
 
         # Apply environment variable overrides
         self._apply_env_overrides()
+
+        # Apply HA add-on overrides
+        if self._ha_addon:
+            self._apply_ha_addon_overrides()
+
         self._save()
 
     def _apply_env_overrides(self):
@@ -106,6 +160,42 @@ class Config:
         if not self._data.get("secret_key"):
             import secrets
             self._data["secret_key"] = secrets.token_hex(32)
+
+    def _apply_ha_addon_overrides(self):
+        """Apply HA add-on options and auto-discover MQTT broker."""
+        options = get_ha_addon_options()
+
+        # Web auth from add-on options
+        if options.get("web_username"):
+            self._data["web_auth"]["username"] = options["web_username"]
+        if options.get("web_password") and not self._data["web_auth"]["password_hash"]:
+            try:
+                import bcrypt
+                self._data["web_auth"]["password_hash"] = bcrypt.hashpw(
+                    options["web_password"].encode(), bcrypt.gensalt()
+                ).decode()
+            except ImportError:
+                self._data["web_auth"]["password_hash"] = options["web_password"]
+
+        # Auto-discover MQTT broker from Supervisor
+        mqtt_service = get_ha_mqtt_service()
+        if mqtt_service and not self._data["ha_mqtt"]["host"]:
+            self._data["ha_mqtt"].update(mqtt_service)
+            log.info("Auto-configured HA MQTT from Supervisor: %s:%s",
+                     mqtt_service["host"], mqtt_service["port"])
+
+        # Auto-add stations from add-on options
+        if options.get("stations") and not self._data["stations"]:
+            for station_id in options["stations"]:
+                self._data["stations"].append({
+                    "id": station_id,
+                    "display_name": station_id,
+                    "enabled": True,
+                    "tracked_lifts": [],
+                    "tracked_slopes": [],
+                    "track_all": True,
+                })
+            log.info("Auto-configured stations: %s", options["stations"])
 
     def _save(self):
         self._path.parent.mkdir(parents=True, exist_ok=True)

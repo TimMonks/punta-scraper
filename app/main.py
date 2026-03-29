@@ -1,4 +1,5 @@
 import logging
+import os
 import signal
 import sys
 import threading
@@ -83,10 +84,15 @@ def main():
 
     flask_app = create_app(config, digisnow_client, ha_publisher, credential_fetcher)
 
+    # In HA add-on mode, skip auth for ingress requests (HA handles auth)
+    if config.ha_addon:
+        log.info("HA add-on mode: ingress auth handled by Supervisor")
+
     def run_web():
         from waitress import serve
-        log.info("Web UI starting on http://0.0.0.0:8099")
-        serve(flask_app, host="0.0.0.0", port=8099, _quiet=True)
+        port = int(os.environ.get("INGRESS_PORT", 8099))
+        log.info("Web UI starting on http://0.0.0.0:%d", port)
+        serve(flask_app, host="0.0.0.0", port=port, _quiet=True)
 
     web_thread = threading.Thread(target=run_web, daemon=True)
     web_thread.start()
