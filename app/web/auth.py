@@ -24,6 +24,10 @@ def login_required(f):
 def check_password(config, password: str) -> bool:
     stored_hash = config.get("web_auth", "password_hash", default="")
     if not stored_hash:
+        # No password set yet - accept "admin" as default and hash it
+        if password == "admin":
+            set_password(config, "admin")
+            return True
         return False
     try:
         return bcrypt.checkpw(password.encode(), stored_hash.encode())
