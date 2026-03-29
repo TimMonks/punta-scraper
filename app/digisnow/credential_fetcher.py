@@ -86,10 +86,9 @@ class CredentialFetcher:
         js_content = resp.text
 
         # Step 3: Extract MQTT credentials
-        # Look for patterns like: mqtt:{host:"...",port:"...",userName:"...",password:"..."}
-        # or config.mqtt.host, config.mqtt.userName, etc.
-        username = self._extract_field(js_content, ["userName", "username", "user"])
-        password = self._extract_field(js_content, ["password", "passwd", "pass"])
+        # The config is structured as: mqtt:{host:"...",port:"...",userName:"...",password:"..."}
+        # Find the mqtt config block and extract userName and password from it
+        username, password = self._extract_mqtt_creds(js_content)
 
         if not username or not password:
             raise ValueError("Could not extract MQTT credentials from widget JS")
@@ -97,20 +96,30 @@ class CredentialFetcher:
         log.info("Extracted credentials: user=%s", username)
         return username, password
 
-    def _extract_field(self, js: str, field_names: list[str]) -> str | None:
-        for name in field_names:
-            # Pattern: mqtt:{...userName:"value"...} or userName:"value"
-            patterns = [
-                rf'"{name}"\s*:\s*"([^"]+)"',
-                rf"'{name}'\s*:\s*'([^']+)'",
-                rf'{name}\s*:\s*"([^"]+)"',
-                rf"{name}\s*:\s*'([^']+)'",
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, js)
-                if match:
-                    return match.group(1)
-        return None
+    def _extract_mqtt_creds(self, js: str) -> tuple[str | None, str | None]:
+        # Look for the mqtt config object: mqtt:{host:"...",userName:"...",password:"..."}
+        # or mqtt:{"host":"...","userName":"...","password":"..."}
+        mqtt_block = re.search(r'mqtt\s*:\s*\{([^}]{10,200})\}', js)
+        if not mqtt_block:
+            return None, None
+
+        block = mqtt_block.group(1)
+        username = None
+        password = None
+
+        for name in ["userName", "username"]:
+            m = re.search(rf'{name}\s*:\s*["\']([^"\']+)["\']', block)
+            if m:
+                username = m.group(1)
+                break
+
+        for name in ["password"]:
+            m = re.search(rf'{name}\s*:\s*["\']([^"\']+)["\']', block)
+            if m:
+                password = m.group(1)
+                break
+
+        return username, password
 
     def _schedule_next(self):
         interval = self._refresh_hours * 3600

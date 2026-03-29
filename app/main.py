@@ -48,11 +48,8 @@ def main():
             len(station_data.sectors),
         )
 
-    # 5. Initialize credential fetcher
-    credential_fetcher = CredentialFetcher(
-        config,
-        on_credentials_updated=lambda u, p: digisnow_client.update_credentials(u, p),
-    )
+    # 5. Initialize credential fetcher (callback set after client creation)
+    credential_fetcher = CredentialFetcher(config)
 
     # 6. Get MQTT credentials
     username, password = credential_fetcher.get_credentials()
@@ -63,6 +60,9 @@ def main():
         password=password,
         on_station_update=on_station_update,
     )
+
+    # Wire up credential refresh callback now that client exists
+    credential_fetcher._on_updated = lambda u, p: digisnow_client.update_credentials(u, p)
 
     # 8. Start HA publisher
     ha_publisher.start()
