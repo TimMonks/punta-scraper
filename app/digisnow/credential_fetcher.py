@@ -71,7 +71,12 @@ class CredentialFetcher:
         version_url = f"https://{station_id}.digisnow.app/v1/widget/widgetversion"
         resp = requests.get(version_url, timeout=10)
         resp.raise_for_status()
-        version = resp.text.strip().strip('"')
+        # Response can be JSON like {"widgetVersion":"1.0.42"} or plain text
+        try:
+            version_data = resp.json()
+            version = version_data.get("widgetVersion", resp.text.strip().strip('"'))
+        except (ValueError, AttributeError):
+            version = resp.text.strip().strip('"')
         log.debug("Widget version for %s: %s", station_id, version)
 
         # Step 2: Fetch versioned widget JS
