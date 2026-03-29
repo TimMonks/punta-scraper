@@ -1,0 +1,363 @@
+import json
+import logging
+import threading
+import time
+
+from flask import (
+    Blueprint,
+    current_app,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+
+from app.digisnow.client import DigiSnowClient
+from app.digisnow.parser import parse_assets
+from app.web.auth import check_password, login_required, set_password
+
+log = logging.getLogger(__name__)
+bp = Blueprint("main", __name__)
+
+
+def _get_config():
+    return current_app.config["APP_CONFIG"]
+
+
+def _get_digisnow() -> DigiSnowClient:
+    return current_app.config["DIGISNOW_CLIENT"]
+
+
+def _get_publisher():
+    return current_app.config["HA_PUBLISHER"]
+
+
+def _get_fetcher():
+    return current_app.config["CREDENTIAL_FETCHER"]
+
+
+# --- Auth ---
+
+@bp.route("/login", methods=["GET", "POST"])
+def login():
+    config = _get_config()
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        expected_user = config.get("web_auth", "username", default="admin")
+        if username == expected_user and check_password(config, password):
+            session["authenticated"] = True
+            return redirect(url_for("main.dashboard"))
+        error = "Invalid credentials"
+    return render_template("login.html", error=error)
+
+
+@bp.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("main.login"))
+
+
+# --- Dashboard ---
+
+@bp.route("/")
+@login_required
+def dashboard():
+    config = _get_config()
+    digisnow = _get_digisnow()
+    publisher = _get_publisher()
+    stations = config.get_stations()
+
+    # Get cached station data from publisher
+    station_data = {}
+    for s in stations:
+        cached = publisher._station_cache.get(s["id"])
+        if cached:
+            station_data[s["id"]] = cached
+
+    return render_template(
+        "dashboard.html",
+        stations=stations,
+        station_data=station_data,
+        digisnow_connected=digisnow.connected,
+        ha_connected=publisher.connected,
+    )
+
+
+# --- Station API ---
+
+@bp.route("/api/stations", methods=["GET"])
+@login_required
+def list_stations():
+    config = _get_config()
+    publisher = _get_publisher()
+    stations = config.get_stations()
+    result = []
+    for s in stations:
+        cached = publisher._station_cache.get(s["id"])
+        info = {**s}
+        if cached:
+            info["lifts_open"] = sum(
+                sec.lifts_open for sec in cached.sectors.values()
+            )
+            info["lifts_total"] = sum(
+                sec.lifts_total for sec in cached.sectors.values()
+            )
+            info["slopes_open"] = sum(
+                sec.slopes_open for sec in cached.sectors.values()
+            )
+            info["slopes_total"] = sum(
+                sec.slopes_total for sec in cached.sectors.values()
+            )
+            info["last_received"] = (
+                cached.last_received.isoformat() if cached.last_received else None
+            )
+        result.append(info)
+    return jsonify(result)
+
+
+@bp.route("/api/stations", methods=["POST"])
+@login_required
+def add_station():
+    data = request.get_json()
+    station_id = data.get("id", "").strip().lower()
+    display_name = data.get("display_name", "").strip()
+    if not station_id:
+        return jsonify({"error": "Station ID required"}), 400
+
+    config = _get_config()
+    station = config.add_station(station_id, display_name)
+    _get_digisnow().subscribe_station(station_id)
+    return jsonify(station), 201
+
+
+@bp.route("/api/stations/<station_id>", methods=["DELETE"])
+@login_required
+def remove_station(station_id):
+    config = _get_config()
+    publisher = _get_publisher()
+
+    # Remove HA entities
+    cached = publisher._station_cache.get(station_id)
+    if cached:
+        publisher.remove_station_entities(station_id, cached)
+
+    _get_digisnow().unsubscribe_station(station_id)
+    config.remove_station(station_id)
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/stations/<station_id>/discover", methods=["POST"])
+@login_required
+def discover_station(station_id):
+    """Temporarily subscribe to a station to discover available lifts/slopes."""
+    import paho.mqtt.client as mqtt
+    import ssl
+
+    fetcher = _get_fetcher()
+    username, password = fetcher.get_credentials()
+
+    result = {"sectors": [], "error": None}
+    received = threading.Event()
+
+    def on_connect(client, userdata, flags, rc, props=None):
+        topic = f"poulpe/DigiSnow/{station_id}/assets/all"
+        client.subscribe(topic, qos=0)
+
+    def on_message(client, userdata, msg):
+        try:
+            payload = json.loads(msg.payload.decode("utf-8"))
+            station_data = parse_assets(station_id, payload)
+            for sector in station_data.sectors.values():
+                sector_info = {
+                    "id": sector.id,
+                    "name": sector.name,
+                    "lifts": [
+                        {"id": l.id, "name": l.name, "type": l.type}
+                        for l in sector.lifts
+                    ],
+                    "slopes": [
+                        {"id": s.id, "name": s.name, "difficulty": s.difficulty}
+                        for s in sector.slopes
+                    ],
+                }
+                result["sectors"].append(sector_info)
+        except Exception as e:
+            result["error"] = str(e)
+        received.set()
+
+    client = mqtt.Client(
+        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+        transport="websockets",
+        protocol=mqtt.MQTTv31,
+    )
+    client.username_pw_set(username, password)
+    client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
+    client.ws_set_options(path="/mqtt")
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    try:
+        client.connect("wss.mqtt.digibox.app", 443, keepalive=60)
+        client.loop_start()
+        # Wait up to 15 seconds for data
+        received.wait(timeout=15)
+        client.loop_stop()
+        client.disconnect()
+    except Exception as e:
+        result["error"] = str(e)
+
+    if not result["sectors"] and not result["error"]:
+        result["error"] = "No data received (station may not exist or use DigiSnow)"
+
+    return jsonify(result)
+
+
+@bp.route("/api/stations/<station_id>/track", methods=["PUT"])
+@login_required
+def update_tracking(station_id):
+    data = request.get_json()
+    config = _get_config()
+    config.update_station(station_id, {
+        "tracked_lifts": data.get("tracked_lifts", []),
+        "tracked_slopes": data.get("tracked_slopes", []),
+        "track_all": data.get("track_all", False),
+    })
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/stations/<station_id>/status", methods=["GET"])
+@login_required
+def station_status(station_id):
+    publisher = _get_publisher()
+    cached = publisher._station_cache.get(station_id)
+    if not cached:
+        return jsonify({"error": "No data"}), 404
+
+    config = _get_config()
+    station_config = config.get_station(station_id)
+    track_all = station_config.get("track_all", True) if station_config else True
+    tracked_lifts = set(station_config.get("tracked_lifts", [])) if station_config else set()
+    tracked_slopes = set(station_config.get("tracked_slopes", [])) if station_config else set()
+
+    sectors = []
+    for sector in cached.sectors.values():
+        lifts = []
+        for l in sector.lifts:
+            if track_all or l.id in tracked_lifts:
+                lifts.append({
+                    "id": l.id,
+                    "name": l.name,
+                    "type": l.type,
+                    "status": l.mapped_status or l.opening_status,
+                    "raw_status": l.opening_status,
+                    "comments": l.comments,
+                    "hours": l.opening_hours,
+                })
+        slopes = []
+        for s in sector.slopes:
+            if track_all or s.id in tracked_slopes:
+                slopes.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "difficulty": s.difficulty,
+                    "status": s.mapped_status or s.opening_status,
+                    "raw_status": s.opening_status,
+                    "hours": s.opening_hours,
+                })
+        sectors.append({
+            "name": sector.name,
+            "lifts": lifts,
+            "slopes": slopes,
+            "lifts_open": sector.lifts_open,
+            "lifts_total": sector.lifts_total,
+            "slopes_open": sector.slopes_open,
+            "slopes_total": sector.slopes_total,
+        })
+
+    return jsonify({
+        "station_id": station_id,
+        "last_received": cached.last_received.isoformat() if cached.last_received else None,
+        "sectors": sectors,
+    })
+
+
+# --- Settings ---
+
+@bp.route("/api/settings/ha-mqtt", methods=["GET"])
+@login_required
+def get_ha_mqtt():
+    config = _get_config()
+    ha = config.get("ha_mqtt", default={})
+    # Don't expose password
+    return jsonify({
+        "host": ha.get("host", ""),
+        "port": ha.get("port", 1883),
+        "username": ha.get("username", ""),
+        "has_password": bool(ha.get("password", "")),
+        "discovery_prefix": ha.get("discovery_prefix", "homeassistant"),
+        "state_topic_prefix": ha.get("state_topic_prefix", "digisnow"),
+    })
+
+
+@bp.route("/api/settings/ha-mqtt", methods=["PUT"])
+@login_required
+def update_ha_mqtt():
+    data = request.get_json()
+    config = _get_config()
+    publisher = _get_publisher()
+
+    for key in ["host", "port", "username", "discovery_prefix", "state_topic_prefix"]:
+        if key in data:
+            val = int(data[key]) if key == "port" else data[key]
+            config.set("ha_mqtt", key, val)
+    if "password" in data and data["password"]:
+        config.set("ha_mqtt", "password", data["password"])
+
+    # Reconnect publisher with new settings
+    publisher.stop()
+    publisher.start()
+
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/settings/mapping", methods=["GET"])
+@login_required
+def get_mapping():
+    config = _get_config()
+    return jsonify(config.get("status_mapping", default={}))
+
+
+@bp.route("/api/settings/mapping", methods=["PUT"])
+@login_required
+def update_mapping():
+    data = request.get_json()
+    config = _get_config()
+    config.set("status_mapping", data)
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/settings/password", methods=["PUT"])
+@login_required
+def change_password():
+    data = request.get_json()
+    new_password = data.get("password", "")
+    if len(new_password) < 4:
+        return jsonify({"error": "Password too short"}), 400
+    set_password(_get_config(), new_password)
+    return jsonify({"ok": True})
+
+
+# --- Health (no auth) ---
+
+@bp.route("/api/health")
+def health():
+    digisnow = _get_digisnow()
+    publisher = _get_publisher()
+    return jsonify({
+        "digisnow_connected": digisnow.connected,
+        "ha_mqtt_connected": publisher.connected,
+    })

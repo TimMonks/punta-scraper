@@ -1,0 +1,18 @@
+services:
+  digisnow-scraper:
+    build: .
+    container_name: digisnow-scraper
+    restart: unless-stopped
+    ports:
+      - "8099:8099"
+    volumes:
+      - ./data:/app/app/data
+    environment:
+      - HA_MQTT_HOST=${HA_MQTT_HOST:-}
+      - HA_MQTT_PORT=${HA_MQTT_PORT:-1883}
+      - HA_MQTT_USERNAME=${HA_MQTT_USERNAME:-}
+      - HA_MQTT_PASSWORD=${HA_MQTT_PASSWORD:-}
+      - WEB_USERNAME=${WEB_USERNAME:-admin}
+      - WEB_PASSWORD=${WEB_PASSWORD:-admin}
+      - SECRET_KEY=${SECRET_KEY:-}
+      - TZ=${TZ:-Europe/Paris}

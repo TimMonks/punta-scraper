@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DigiSnow Scraper{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('main.static', filename='style.css') }}">
+</head>
+<body>
+    {% if session.get('authenticated') %}
+    <nav class="navbar">
+        <div class="nav-brand">DigiSnow Scraper</div>
+        <div class="nav-links">
+            <a href="{{ url_for('main.dashboard') }}" class="{% if request.endpoint == 'main.dashboard' %}active{% endif %}">Dashboard</a>
+            <a href="{{ url_for('main.logout') }}">Logout</a>
+        </div>
+    </nav>
+    {% endif %}
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - DigiSnow Scraper{% endblock %}
+{% block content %}
+<div class="dashboard">
+    <div class="header-row">
+        <h1>Dashboard</h1>
+        <div class="connection-status">
+            <span class="status-dot {{ 'green' if digisnow_connected else 'red' }}"></span>
+            DigiSnow
+            <span class="status-dot {{ 'green' if ha_connected else 'red' }}" style="margin-left: 1rem;"></span>
+            HA MQTT
+        </div>
+    </div>
+
+    <!-- Add Station -->
+    <div class="card">
+        <h2>Add Station</h2>
+        <form id="add-station-form" class="inline-form">
+            <input type="text" id="station-id" placeholder="Station ID (e.g. valfrejus)" required>
+            <input type="text" id="station-name" placeholder="Display name (optional)">
+            <button type="submit" class="btn btn-primary">Add</button>
+            <button type="button" id="discover-btn" class="btn btn-secondary">Discover</button>
+        </form>
+        <div id="discover-result" class="discover-result" style="display:none;"></div>
+    </div>
+
+    <!-- Stations -->
+    <div id="stations-container">
+    {% for station in stations %}
+    <div class="card station-card" data-station-id="{{ station.id }}">
+        <div class="station-header">
+            <h2>{{ station.display_name or station.id }}</h2>
+            <div class="station-actions">
+                <button class="btn btn-sm btn-danger" onclick="removeStation('{{ station.id }}')">Remove</button>
+            </div>
+        </div>
+        {% if station.id in station_data %}
+        {% set data = station_data[station.id] %}
+        <div class="station-body">
+            {% for sector_id, sector in data.sectors.items() %}
+            <div class="sector">
+                <h3>{{ sector.name }}</h3>
+                <div class="stats">
+                    Lifts: {{ sector.lifts_open }}/{{ sector.lifts_total }} |
+                    Slopes: {{ sector.slopes_open }}/{{ sector.slopes_total }}
+                </div>
+                {% if sector.lifts %}
+                <table class="status-table">
+                    <thead><tr><th>Lift</th><th>Type</th><th>Status</th><th>Hours</th><th>Comments</th></tr></thead>
+                    <tbody>
+                    {% for lift in sector.lifts %}
+                    <tr>
+                        <td>{{ lift.name }}</td>
+                        <td>{{ lift.type }}</td>
+                        <td><span class="status-badge status-{{ lift.mapped_status or lift.opening_status }}">{{ lift.mapped_status or lift.opening_status }}</span></td>
+                        <td>{{ lift.opening_hours }}</td>
+                        <td>{{ lift.comments }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+                {% if sector.slopes %}
+                <details>
+                    <summary>Slopes ({{ sector.slopes|length }})</summary>
+                    <table class="status-table">
+                        <thead><tr><th>Slope</th><th>Difficulty</th><th>Status</th><th>Hours</th></tr></thead>
+                        <tbody>
+                        {% for slope in sector.slopes %}
+                        <tr>
+                            <td>{{ slope.name }}</td>
+                            <td><span class="difficulty-badge diff-{{ slope.difficulty }}">{{ slope.difficulty }}</span></td>
+                            <td><span class="status-badge status-{{ slope.mapped_status or slope.opening_status }}">{{ slope.mapped_status or slope.opening_status }}</span></td>
+                            <td>{{ slope.opening_hours }}</td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </details>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="no-data">Waiting for data...</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+    </div>
+
+    <!-- Settings -->
+    <div class="card">
+        <h2>Settings</h2>
+        <div class="settings-grid">
+            <div class="setting-section">
+                <h3>HA MQTT Broker</h3>
+                <form id="ha-mqtt-form">
+                    <div class="form-group">
+                        <label>Host</label>
+                        <input type="text" id="ha-host" placeholder="192.168.1.x">
+                    </div>
+                    <div class="form-group">
+                        <label>Port</label>
+                        <input type="number" id="ha-port" value="1883">
+                    </div>
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="ha-username">
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="ha-password" placeholder="Leave blank to keep current">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save MQTT Settings</button>
+                </form>
+            </div>
+            <div class="setting-section">
+                <h3>Status Mapping</h3>
+                <div id="mapping-editor"></div>
+                <button class="btn btn-primary" onclick="saveMapping()">Save Mapping</button>
+            </div>
+            <div class="setting-section">
+                <h3>Change Password</h3>
+                <form id="password-form">
+                    <div class="form-group">
+                        <label>New Password</label>
+                        <input type="password" id="new-password" minlength="4" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Update Password</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('main.static', filename='app.js') }}"></script>
+{% endblock %}
