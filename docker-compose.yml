@@ -4,8 +4,8 @@ services:
     build: .
     container_name: digisnow-scraper
     restart: unless-stopped
-    ports:
-      - "8099:8099"
+    expose:
+      - "8099"
     volumes:
       - ./data:/app/app/data
     environment:
@@ -17,6 +17,17 @@ services:
       - WEB_PASSWORD=${WEB_PASSWORD:-admin}
       - SECRET_KEY=${SECRET_KEY:-}
       - TZ=${TZ:-Europe/Paris}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-}
+      - OIDC_END_SESSION_URL=${OIDC_END_SESSION_URL:-}
+      - OIDC_ADMIN_GROUP=${OIDC_ADMIN_GROUP:-authentik Admins}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     networks:

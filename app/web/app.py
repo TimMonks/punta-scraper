@@ -28,4 +28,8 @@ def create_app(config, digisnow_client, ha_publisher, credential_fetcher):
     from app.web.routes import bp
     app.register_blueprint(bp)
 
+    from app.web.oidc import bp as oidc_bp, init_oidc
+    init_oidc(app)
+    app.register_blueprint(oidc_bp)
+
     return app

@@ -87,6 +87,10 @@ body {
 .login-container h1 { margin-bottom: 1.5rem; }
 .login-form { background: var(--card-bg); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--border); text-align: left; }
 .login-form .btn { width: 100%; margin-top: 0.5rem; }
+.btn-oidc { display: block; text-align: center; text-decoration: none; padding: 0.6rem 1rem; }
+.login-divider { text-align: center; margin: 1rem 0; position: relative; }
+.login-divider::before { content: ""; position: absolute; top: 50%; left: 0; right: 0; border-top: 1px solid var(--border); }
+.login-divider span { background: var(--card-bg); padding: 0 0.75rem; position: relative; color: var(--text-muted); font-size: 0.85rem; }
 
 /* Alerts */
 .alert { padding: 0.5rem 0.75rem; border-radius: 4px; margin-bottom: 0.75rem; font-size: 0.85rem; }

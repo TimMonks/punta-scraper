@@ -41,8 +41,9 @@ def _get_fetcher():
 
 @bp.route("/login", methods=["GET", "POST"])
 def login():
+    from app.web.oidc import is_oidc_configured
     config = _get_config()
-    error = None
+    error = request.args.get("error")
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
@@ -51,12 +52,16 @@ def login():
             session["authenticated"] = True
             return redirect(url_for("main.dashboard"))
         error = "Invalid credentials"
-    return render_template("login.html", error=error)
+    return render_template("login.html", error=error, oidc_enabled=is_oidc_configured())
 
 
 @bp.route("/logout")
 def logout():
+    from app.web.oidc import build_logout_url
+    logout_url = build_logout_url()
     session.clear()
+    if logout_url:
+        return redirect(logout_url)
     return redirect(url_for("main.login"))
 
 
