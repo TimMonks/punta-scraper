@@ -107,8 +107,9 @@ def main():
 
     log.info("DigiSnow Scraper is running")
 
-    # Block until shutdown
-    shutdown_event.wait()
+    # Block until shutdown (use timeout loop so Windows can deliver signals)
+    while not shutdown_event.is_set():
+        shutdown_event.wait(timeout=1)
 
     # Cleanup
     log.info("Shutting down...")

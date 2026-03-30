@@ -15,7 +15,6 @@ from flask import (
 )
 
 from app.digisnow.client import DigiSnowClient
-from app.digisnow.parser import parse_assets
 from app.web.auth import check_password, login_required, set_password
 
 log = logging.getLogger(__name__)
@@ -150,70 +149,25 @@ def remove_station(station_id):
     return jsonify({"ok": True})
 
 
-@bp.route("/api/stations/<station_id>/discover", methods=["POST"])
+@bp.route("/api/stations/search", methods=["GET"])
 @login_required
-def discover_station(station_id):
-    """Temporarily subscribe to a station to discover available lifts/slopes."""
-    import paho.mqtt.client as mqtt
-    import ssl
+def search_station():
+    """Check if a station ID exists on DigiSnow by probing its widget endpoint."""
+    import requests
 
-    fetcher = _get_fetcher()
-    username, password = fetcher.get_credentials()
-
-    result = {"sectors": [], "error": None}
-    received = threading.Event()
-
-    def on_connect(client, userdata, flags, rc, props=None):
-        topic = f"poulpe/DigiSnow/{station_id}/assets/all"
-        client.subscribe(topic, qos=0)
-
-    def on_message(client, userdata, msg):
-        try:
-            payload = json.loads(msg.payload.decode("utf-8"))
-            station_data = parse_assets(station_id, payload)
-            for sector in station_data.sectors.values():
-                sector_info = {
-                    "id": sector.id,
-                    "name": sector.name,
-                    "lifts": [
-                        {"id": l.id, "name": l.name, "type": l.type}
-                        for l in sector.lifts
-                    ],
-                    "slopes": [
-                        {"id": s.id, "name": s.name, "difficulty": s.difficulty}
-                        for s in sector.slopes
-                    ],
-                }
-                result["sectors"].append(sector_info)
-        except Exception as e:
-            result["error"] = str(e)
-        received.set()
-
-    client = mqtt.Client(
-        callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        transport="websockets",
-        protocol=mqtt.MQTTv31,
-    )
-    client.username_pw_set(username, password)
-    client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
-    client.ws_set_options(path="/mqtt")
-    client.on_connect = on_connect
-    client.on_message = on_message
+    query = request.args.get("q", "").strip().lower()
+    if not query:
+        return jsonify({"error": "Search query required"}), 400
 
     try:
-        client.connect("wss.mqtt.digibox.app", 443, keepalive=60)
-        client.loop_start()
-        # Wait up to 15 seconds for data
-        received.wait(timeout=15)
-        client.loop_stop()
-        client.disconnect()
-    except Exception as e:
-        result["error"] = str(e)
-
-    if not result["sectors"] and not result["error"]:
-        result["error"] = "No data received (station may not exist or use DigiSnow)"
-
-    return jsonify(result)
+        url = f"https://{query}.digisnow.app/v1/widget/widgetversion"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            return jsonify({"id": query, "exists": True})
+        else:
+            return jsonify({"id": query, "exists": False})
+    except requests.RequestException:
+        return jsonify({"id": query, "exists": False})
 
 
 @bp.route("/api/stations/<station_id>/track", methods=["PUT"])

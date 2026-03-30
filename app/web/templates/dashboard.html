@@ -19,15 +19,26 @@
             <input type="text" id="station-id" placeholder="Station ID (e.g. valfrejus)" required>
             <input type="text" id="station-name" placeholder="Display name (optional)">
             <button type="submit" class="btn btn-primary">Add</button>
-            <button type="button" id="discover-btn" class="btn btn-secondary">Discover</button>
+            <button type="button" id="search-btn" class="btn btn-secondary">Search</button>
         </form>
-        <div id="discover-result" class="discover-result" style="display:none;"></div>
+        <div id="search-result" class="search-result" style="display:none;"></div>
     </div>
 
-    <!-- Stations -->
+    <!-- Station Tabs -->
+    {% if stations|length > 1 %}
+    <div class="station-tabs">
+        {% for station in stations %}
+        <button class="tab-btn {% if loop.first %}active{% endif %}" data-tab="station-{{ station.id }}">
+            {{ station.display_name or station.id }}
+        </button>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Station Tab Panels -->
     <div id="stations-container">
     {% for station in stations %}
-    <div class="card station-card" data-station-id="{{ station.id }}">
+    <div class="card station-card station-panel {% if not loop.first %}hidden{% endif %}" id="station-{{ station.id }}" data-station-id="{{ station.id }}">
         <div class="station-header">
             <h2>{{ station.display_name or station.id }}</h2>
             <div class="station-actions">
@@ -61,22 +72,19 @@
                 </table>
                 {% endif %}
                 {% if sector.slopes %}
-                <details>
-                    <summary>Slopes ({{ sector.slopes|length }})</summary>
-                    <table class="status-table">
-                        <thead><tr><th>Slope</th><th>Difficulty</th><th>Status</th><th>Hours</th></tr></thead>
-                        <tbody>
-                        {% for slope in sector.slopes %}
-                        <tr>
-                            <td>{{ slope.name }}</td>
-                            <td><span class="difficulty-badge diff-{{ slope.difficulty }}">{{ slope.difficulty }}</span></td>
-                            <td><span class="status-badge status-{{ slope.mapped_status or slope.opening_status }}">{{ slope.mapped_status or slope.opening_status }}</span></td>
-                            <td>{{ slope.opening_hours }}</td>
-                        </tr>
-                        {% endfor %}
-                        </tbody>
-                    </table>
-                </details>
+                <table class="status-table">
+                    <thead><tr><th>Slope</th><th>Difficulty</th><th>Status</th><th>Hours</th></tr></thead>
+                    <tbody>
+                    {% for slope in sector.slopes %}
+                    <tr>
+                        <td>{{ slope.name }}</td>
+                        <td><span class="difficulty-badge diff-{{ slope.difficulty }}">{{ slope.difficulty }}</span></td>
+                        <td><span class="status-badge status-{{ slope.mapped_status or slope.opening_status }}">{{ slope.mapped_status or slope.opening_status }}</span></td>
+                        <td>{{ slope.opening_hours }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
                 {% endif %}
             </div>
             {% endfor %}

@@ -5,6 +5,19 @@ from app.models import LiftStatus, SectorData, SlopeStatus, StationData
 
 log = logging.getLogger(__name__)
 
+DIFFICULTY_MAP = {
+    "V": "green",
+    "B": "blue",
+    "R": "red",
+    "N": "black",
+}
+
+
+def _map_difficulty(raw_difficulty: str) -> str:
+    """Map DigiSnow difficulty codes (V/B/R/N) to color names."""
+    prefix = raw_difficulty.split("-")[0] if raw_difficulty else ""
+    return DIFFICULTY_MAP.get(prefix, raw_difficulty)
+
 
 def parse_assets(station_id: str, raw: dict | str) -> StationData:
     """Parse the assets/all MQTT payload into a StationData object."""
@@ -38,7 +51,7 @@ def parse_assets(station_id: str, raw: dict | str) -> StationData:
                 opening_status=lift_raw.get("openingStatus", "unknown"),
                 last_update=lift_raw.get("openingStatusLastUpdate", ""),
                 season=lift_raw.get("season", ""),
-                comments=lift_raw.get("publicComments", "").strip(),
+                comments=(lift_raw.get("publicComments") or "").strip(),
                 opening_hours=lift_raw.get("openingHours", ""),
                 sector_name=sector_name,
             )
@@ -49,7 +62,7 @@ def parse_assets(station_id: str, raw: dict | str) -> StationData:
             slope = SlopeStatus(
                 id=slope_raw.get("id", ""),
                 name=slope_raw.get("name", ""),
-                difficulty=slope_raw.get("difficulty", ""),
+                difficulty=_map_difficulty(slope_raw.get("difficulty", "")),
                 opening_status=slope_raw.get("openingStatus", "unknown"),
                 last_update=slope_raw.get("openingStatusLastUpdate", ""),
                 sector_name=sector_name,

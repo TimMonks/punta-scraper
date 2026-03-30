@@ -157,9 +157,30 @@ details summary { cursor: pointer; color: var(--primary); font-size: 0.85rem; ma
 .mapping-row input { padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 3px; font-size: 0.85rem; width: 45%; }
 .mapping-row .arrow { color: var(--text-muted); }
 
-/* Discover result */
-.discover-result { margin-top: 0.75rem; padding: 0.75rem; background: #f8fafc; border-radius: 4px; font-size: 0.85rem; }
-.discover-result .loading { color: var(--text-muted); }
+/* Search result */
+.search-result { margin-top: 0.75rem; padding: 0.75rem; background: #f8fafc; border-radius: 4px; font-size: 0.85rem; }
+.search-result .loading { color: var(--text-muted); }
+.search-result .found { color: var(--green); font-weight: 500; }
+.search-result .not-found { color: var(--text-muted); }
+
+/* Station tabs */
+.station-tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 2px solid var(--border); }
+.tab-btn {
+    padding: 0.6rem 1.2rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+.station-panel.hidden { display: none; }
+.station-panel { border-radius: 0 0 8px 8px; margin-top: 0; }
 
 @media (max-width: 600px) {
     .settings-grid { grid-template-columns: 1fr; }

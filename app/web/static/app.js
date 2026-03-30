@@ -17,10 +17,21 @@ function setupForms() {
     });
   }
 
-  const discoverBtn = document.getElementById("discover-btn");
-  if (discoverBtn) {
-    discoverBtn.addEventListener("click", discoverStation);
+  const searchBtn = document.getElementById("search-btn");
+  if (searchBtn) {
+    searchBtn.addEventListener("click", searchStation);
   }
+
+  // Tab switching
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".station-panel").forEach((p) => p.classList.add("hidden"));
+      btn.classList.add("active");
+      const panel = document.getElementById(btn.dataset.tab);
+      if (panel) panel.classList.remove("hidden");
+    });
+  });
 
   const haMqttForm = document.getElementById("ha-mqtt-form");
   if (haMqttForm) {
@@ -65,33 +76,26 @@ async function removeStation(id) {
   location.reload();
 }
 
-async function discoverStation() {
+async function searchStation() {
   const id = document.getElementById("station-id").value.trim().toLowerCase();
   if (!id) return;
 
-  const resultDiv = document.getElementById("discover-result");
+  const resultDiv = document.getElementById("search-result");
   resultDiv.style.display = "block";
-  resultDiv.innerHTML = '<span class="loading">Discovering lifts and slopes... (up to 15s)</span>';
+  resultDiv.innerHTML = '<span class="loading">Searching...</span>';
 
-  const resp = await fetch(`/api/stations/${id}/discover`, { method: "POST" });
-  const data = await resp.json();
+  try {
+    const resp = await fetch(`/api/stations/search?q=${encodeURIComponent(id)}`);
+    const data = await resp.json();
 
-  if (data.error) {
-    resultDiv.innerHTML = `<div class="alert alert-error">${data.error}</div>`;
-    return;
-  }
-
-  let html = "";
-  for (const sector of data.sectors) {
-    html += `<h3>${sector.name}</h3>`;
-    if (sector.lifts.length) {
-      html += "<p><strong>Lifts:</strong> " + sector.lifts.map((l) => `${l.name} (${l.type})`).join(", ") + "</p>";
+    if (data.exists) {
+      resultDiv.innerHTML = `<span class="found">Station "${data.id}" found on DigiSnow.</span>`;
+    } else {
+      resultDiv.innerHTML = `<span class="not-found">Station "${id}" not found on DigiSnow. Check the ID and try again.</span>`;
     }
-    if (sector.slopes.length) {
-      html += "<p><strong>Slopes:</strong> " + sector.slopes.map((s) => `${s.name}`).join(", ") + "</p>";
-    }
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="alert alert-error">Search failed: ${e.message}</div>`;
   }
-  resultDiv.innerHTML = html || "<p>No sectors found.</p>";
 }
 
 async function refreshStations() {
@@ -101,7 +105,11 @@ async function refreshStations() {
     try {
       const resp = await fetch(`/api/stations/${stationId}/status`);
       if (!resp.ok) continue;
-      // Just reload the page for simplicity on data update
+      const data = await resp.json();
+      if (data && Object.keys(data).length > 0) {
+        location.reload();
+        return;
+      }
     } catch (e) {
       // ignore
     }
