@@ -55,7 +55,7 @@ async function addStation() {
   const name = document.getElementById("station-name").value.trim();
   if (!id) return;
 
-  const resp = await fetch("/api/stations", {
+  const resp = await fetch("api/stations", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, display_name: name }),
@@ -72,7 +72,7 @@ async function addStation() {
 async function removeStation(id) {
   if (!confirm(`Remove station "${id}"? This will also remove HA entities.`)) return;
 
-  await fetch(`/api/stations/${id}`, { method: "DELETE" });
+  await fetch(`api/stations/${id}`, { method: "DELETE" });
   location.reload();
 }
 
@@ -85,7 +85,7 @@ async function searchStation() {
   resultDiv.innerHTML = '<span class="loading">Searching...</span>';
 
   try {
-    const resp = await fetch(`/api/stations/search?q=${encodeURIComponent(id)}`);
+    const resp = await fetch(`api/stations/search?q=${encodeURIComponent(id)}`);
     const data = await resp.json();
 
     if (data.exists) {
@@ -103,7 +103,7 @@ async function refreshStations() {
   for (const card of cards) {
     const stationId = card.dataset.stationId;
     try {
-      const resp = await fetch(`/api/stations/${stationId}/status`);
+      const resp = await fetch(`api/stations/${stationId}/status`);
       if (!resp.ok) continue;
       const data = await resp.json();
       if (data && Object.keys(data).length > 0) {
@@ -118,7 +118,7 @@ async function refreshStations() {
 
 async function loadHAMQTTSettings() {
   try {
-    const resp = await fetch("/api/settings/ha-mqtt");
+    const resp = await fetch("api/settings/ha-mqtt");
     const data = await resp.json();
     const hostEl = document.getElementById("ha-host");
     if (hostEl) {
@@ -140,7 +140,7 @@ async function saveHAMQTT() {
   const pw = document.getElementById("ha-password").value;
   if (pw) payload.password = pw;
 
-  const resp = await fetch("/api/settings/ha-mqtt", {
+  const resp = await fetch("api/settings/ha-mqtt", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -150,7 +150,7 @@ async function saveHAMQTT() {
 
 async function loadMapping() {
   try {
-    const resp = await fetch("/api/settings/mapping");
+    const resp = await fetch("api/settings/mapping");
     const data = await resp.json();
     const editor = document.getElementById("mapping-editor");
     if (!editor) return;
@@ -178,7 +178,7 @@ async function saveMapping() {
     if (key) mapping[key] = value;
   });
 
-  const resp = await fetch("/api/settings/mapping", {
+  const resp = await fetch("api/settings/mapping", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(mapping),
@@ -188,7 +188,7 @@ async function saveMapping() {
 
 async function changePassword() {
   const pw = document.getElementById("new-password").value;
-  const resp = await fetch("/api/settings/password", {
+  const resp = await fetch("api/settings/password", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ password: pw }),
