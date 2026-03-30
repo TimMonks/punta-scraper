@@ -1,5 +1,5 @@
 name: DigiSnow Ski Station Scraper
-version: "1.1.1"
+version: "1.2.0"
 slug: digisnow-scraper
 description: Scrapes ski lift/slope status from DigiSnow-powered resorts and publishes to Home Assistant via MQTT
 url: https://github.com/TimMonks/punta-scraper
@@ -7,7 +7,6 @@ image: ghcr.io/timmonks/punta-scraper
 arch:
   - amd64
   - aarch64
-  - armv7
 ports:
   8099/tcp: 8099
 ports_description:
