@@ -7,15 +7,17 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    {% if session.get('authenticated') %}
     <nav class="navbar">
         <div class="nav-brand">DigiSnow Scraper</div>
         <div class="nav-links">
             <a href="{{ url_for('main.dashboard') }}" class="{% if request.endpoint == 'main.dashboard' %}active{% endif %}">Dashboard</a>
+            {% if session.get('authenticated') %}
             <a href="{{ url_for('main.logout') }}">Logout</a>
+            {% else %}
+            <a href="{{ url_for('main.login') }}">Login</a>
+            {% endif %}
         </div>
     </nav>
-    {% endif %}
     <main class="container">
         {% block content %}{% endblock %}
     </main>

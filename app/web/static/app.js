@@ -1,8 +1,11 @@
 // Dashboard auto-refresh and interactivity
 
 document.addEventListener("DOMContentLoaded", () => {
-  loadHAMQTTSettings();
-  loadMapping();
+  // Only load admin settings when authenticated (forms present in DOM)
+  if (document.getElementById("ha-mqtt-form")) {
+    loadHAMQTTSettings();
+    loadMapping();
+  }
   setupForms();
   // Auto-refresh station status every 30 seconds
   setInterval(refreshStations, 30000);

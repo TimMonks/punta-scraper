@@ -68,7 +68,6 @@ def logout():
 # --- Dashboard ---
 
 @bp.route("/")
-@login_required
 def dashboard():
     config = _get_config()
     digisnow = _get_digisnow()
@@ -82,19 +81,23 @@ def dashboard():
         if cached:
             station_data[s["id"]] = cached
 
+    is_authenticated = bool(
+        session.get("authenticated") or (config and config.ha_addon)
+    )
+
     return render_template(
         "dashboard.html",
         stations=stations,
         station_data=station_data,
         digisnow_connected=digisnow.connected,
         ha_connected=publisher.connected,
+        authenticated=is_authenticated,
     )
 
 
 # --- Station API ---
 
 @bp.route("/api/stations", methods=["GET"])
-@login_required
 def list_stations():
     config = _get_config()
     publisher = _get_publisher()
@@ -189,7 +192,6 @@ def update_tracking(station_id):
 
 
 @bp.route("/api/stations/<station_id>/status", methods=["GET"])
-@login_required
 def station_status(station_id):
     publisher = _get_publisher()
     cached = publisher._station_cache.get(station_id)

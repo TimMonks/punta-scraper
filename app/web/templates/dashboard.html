@@ -12,6 +12,7 @@
         </div>
     </div>
 
+    {% if authenticated %}
     <!-- Add Station -->
     <div class="card">
         <h2>Add Station</h2>
@@ -23,6 +24,7 @@
         </form>
         <div id="search-result" class="search-result" style="display:none;"></div>
     </div>
+    {% endif %}
 
     <!-- Station Tabs -->
     {% if stations|length > 1 %}
@@ -41,9 +43,11 @@
     <div class="card station-card station-panel {% if not loop.first %}hidden{% endif %}" id="station-{{ station.id }}" data-station-id="{{ station.id }}">
         <div class="station-header">
             <h2>{{ station.display_name or station.id }}</h2>
+            {% if authenticated %}
             <div class="station-actions">
                 <button class="btn btn-sm btn-danger" onclick="removeStation('{{ station.id }}')">Remove</button>
             </div>
+            {% endif %}
         </div>
         {% if station.id in station_data %}
         {% set data = station_data[station.id] %}
@@ -96,6 +100,7 @@
     {% endfor %}
     </div>
 
+    {% if authenticated %}
     <!-- Settings -->
     <div class="card">
         <h2>Settings</h2>
@@ -139,6 +144,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 </div>
 {% endblock %}
 {% block scripts %}
