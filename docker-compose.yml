@@ -13,8 +13,6 @@ services:
       - HA_MQTT_PORT=${HA_MQTT_PORT:-1883}
       - HA_MQTT_USERNAME=${HA_MQTT_USERNAME:-}
       - HA_MQTT_PASSWORD=${HA_MQTT_PASSWORD:-}
-      - WEB_USERNAME=${WEB_USERNAME:-admin}
-      - WEB_PASSWORD=${WEB_PASSWORD:-admin}
       - SECRET_KEY=${SECRET_KEY:-}
       - TZ=${TZ:-Europe/Paris}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}

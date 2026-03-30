@@ -15,7 +15,7 @@ from flask import (
 )
 
 from app.digisnow.client import DigiSnowClient
-from app.web.auth import check_password, login_required, set_password
+from app.web.auth import login_required
 
 log = logging.getLogger(__name__)
 bp = Blueprint("main", __name__)
@@ -39,20 +39,10 @@ def _get_fetcher():
 
 # --- Auth ---
 
-@bp.route("/login", methods=["GET", "POST"])
+@bp.route("/login")
 def login():
-    from app.web.oidc import is_oidc_configured
-    config = _get_config()
     error = request.args.get("error")
-    if request.method == "POST":
-        username = request.form.get("username", "")
-        password = request.form.get("password", "")
-        expected_user = config.get("web_auth", "username", default="admin")
-        if username == expected_user and check_password(config, password):
-            session["authenticated"] = True
-            return redirect(url_for("main.dashboard"))
-        error = "Invalid credentials"
-    return render_template("login.html", error=error, oidc_enabled=is_oidc_configured())
+    return render_template("login.html", error=error)
 
 
 @bp.route("/logout")
@@ -298,17 +288,6 @@ def update_mapping():
     data = request.get_json()
     config = _get_config()
     config.set("status_mapping", data)
-    return jsonify({"ok": True})
-
-
-@bp.route("/api/settings/password", methods=["PUT"])
-@login_required
-def change_password():
-    data = request.get_json()
-    new_password = data.get("password", "")
-    if len(new_password) < 4:
-        return jsonify({"error": "Password too short"}), 400
-    set_password(_get_config(), new_password)
     return jsonify({"ok": True})
 
 

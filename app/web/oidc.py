@@ -1,8 +1,5 @@
 """
 OIDC integration with Authentik for centralized authentication.
-
-When OIDC is configured (via environment variables), users can log in
-via Authentik. Local username/password login remains available as fallback.
 """
 
 import logging

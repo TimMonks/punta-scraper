@@ -44,13 +44,6 @@ function setupForms() {
     });
   }
 
-  const passwordForm = document.getElementById("password-form");
-  if (passwordForm) {
-    passwordForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      changePassword();
-    });
-  }
 }
 
 async function addStation() {
@@ -189,18 +182,3 @@ async function saveMapping() {
   if (resp.ok) alert("Mapping saved.");
 }
 
-async function changePassword() {
-  const pw = document.getElementById("new-password").value;
-  const resp = await fetch("api/settings/password", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: pw }),
-  });
-  if (resp.ok) {
-    alert("Password updated.");
-    document.getElementById("new-password").value = "";
-  } else {
-    const data = await resp.json();
-    alert(data.error || "Failed to update password");
-  }
-}

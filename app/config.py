@@ -67,10 +67,6 @@ DEFAULT_CONFIG = {
         "discovery_prefix": "homeassistant",
         "state_topic_prefix": "digisnow",
     },
-    "web_auth": {
-        "username": "admin",
-        "password_hash": "",
-    },
     "status_mapping": DEFAULT_STATUS_MAPPING,
     "stations": [],
     "digisnow_credentials": {
@@ -131,7 +127,6 @@ class Config:
             "HA_MQTT_PORT": ("ha_mqtt", "port"),
             "HA_MQTT_USERNAME": ("ha_mqtt", "username"),
             "HA_MQTT_PASSWORD": ("ha_mqtt", "password"),
-            "WEB_USERNAME": ("web_auth", "username"),
             "SECRET_KEY": ("secret_key", None),
         }
         for env_var, path in env_map.items():
@@ -144,18 +139,6 @@ class Config:
                         val = int(val)
                     self._data[path[0]][path[1]] = val
 
-        # WEB_PASSWORD is special: hash it on first use
-        web_pw = os.environ.get("WEB_PASSWORD")
-        if web_pw and not self._data["web_auth"]["password_hash"]:
-            try:
-                import bcrypt
-                self._data["web_auth"]["password_hash"] = bcrypt.hashpw(
-                    web_pw.encode(), bcrypt.gensalt()
-                ).decode()
-            except ImportError:
-                log.warning("bcrypt not installed, storing password as plaintext")
-                self._data["web_auth"]["password_hash"] = web_pw
-
         # Generate secret key if missing
         if not self._data.get("secret_key"):
             import secrets
@@ -164,18 +147,6 @@ class Config:
     def _apply_ha_addon_overrides(self):
         """Apply HA add-on options and auto-discover MQTT broker."""
         options = get_ha_addon_options()
-
-        # Web auth from add-on options
-        if options.get("web_username"):
-            self._data["web_auth"]["username"] = options["web_username"]
-        if options.get("web_password") and not self._data["web_auth"]["password_hash"]:
-            try:
-                import bcrypt
-                self._data["web_auth"]["password_hash"] = bcrypt.hashpw(
-                    options["web_password"].encode(), bcrypt.gensalt()
-                ).decode()
-            except ImportError:
-                self._data["web_auth"]["password_hash"] = options["web_password"]
 
         # Auto-discover MQTT broker from Supervisor
         mqtt_service = get_ha_mqtt_service()

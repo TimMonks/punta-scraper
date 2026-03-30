@@ -7,21 +7,7 @@
         {% if error %}
         <div class="alert alert-error">{{ error }}</div>
         {% endif %}
-        {% if oidc_enabled %}
         <a href="{{ url_for('oidc.oidc_login') }}" class="btn btn-primary btn-oidc">Login with Authentik</a>
-        <div class="login-divider"><span>or</span></div>
-        {% endif %}
-        <form method="POST">
-            <div class="form-group">
-                <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autofocus>
-            </div>
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" required>
-            </div>
-            <button type="submit" class="btn btn-primary">Login</button>
-        </form>
     </div>
 </div>
 {% endblock %}
