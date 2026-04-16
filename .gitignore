@@ -9,4 +9,5 @@ build/
 .venv/
 
 # Local config
-.claude/
+.claude/*
+!.claude/agents/
