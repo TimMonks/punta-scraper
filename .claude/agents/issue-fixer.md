@@ -5,11 +5,13 @@
 Every response you produce MUST begin with a header line in this exact format:
 
 ```
-[claude-opus-4-6 2026-04-16T08:32:17Z]
+[<model-id> <timestamp>]
 ```
 
-- **Model**: your model identifier exactly as it appears in your metadata (e.g. `claude-opus-4-6`)
+- **Model**: your actual model identifier exactly as it appears in your metadata (e.g. `claude-opus-4-6`, `claude-opus-4-7`)
 - **Timestamp**: the current UTC time, obtained by running `date -u +%Y-%m-%dT%H:%M:%SZ` at the start of your response
+
+Example: `[claude-opus-4-7 2026-04-16T08:32:17Z]`
 
 This header serves as an audit trail.
 
