@@ -12,6 +12,9 @@ from app.models import LiftStatus, SlopeStatus, StationData
 log = logging.getLogger(__name__)
 
 RECONNECT_DELAY = 10
+# Initial-connect retries back off exponentially up to this cap (#5): a
+# permanently wrong host must not log an ERROR every RECONNECT_DELAY seconds.
+MAX_CONNECT_RETRY_DELAY = 300
 
 
 def _slugify(text: str) -> str:
@@ -28,6 +31,7 @@ class HAPublisher:
         self._client: mqtt.Client | None = None
         self._connected = False
         self._should_run = False
+        self._connect_retry_delay = RECONNECT_DELAY
         self._lock = threading.Lock()
         # Cache of last known station data for republishing on reconnect
         self._station_cache: dict[str, StationData] = {}
@@ -202,14 +206,17 @@ class HAPublisher:
             self._client.connect(host, port, keepalive=60)
             self._client.loop_start()
         except Exception as e:
-            log.error("Failed to connect to HA MQTT: %s", e)
+            delay = self._connect_retry_delay
+            log.error("Failed to connect to HA MQTT: %s (retrying in %ds)", e, delay)
             if self._should_run:
-                threading.Timer(RECONNECT_DELAY, self._connect).start()
+                self._connect_retry_delay = min(delay * 2, MAX_CONNECT_RETRY_DELAY)
+                threading.Timer(delay, self._connect).start()
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code == 0:
             log.info("Connected to HA MQTT broker")
             self._connected = True
+            self._connect_retry_delay = RECONNECT_DELAY
             # Republish cached data
             for station_data in self._station_cache.values():
                 self.publish_station_data(station_data)
