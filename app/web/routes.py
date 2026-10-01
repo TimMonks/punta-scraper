@@ -300,4 +300,5 @@ def health():
     return jsonify({
         "digisnow_connected": digisnow.connected,
         "ha_mqtt_connected": publisher.connected,
+        "ha_mqtt_config_error": publisher.config_error,
     })

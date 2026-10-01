@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import socket
 import threading
 from typing import Optional
 
@@ -15,6 +16,38 @@ RECONNECT_DELAY = 10
 # Initial-connect retries back off exponentially up to this cap (#5): a
 # permanently wrong host must not log an ERROR every RECONNECT_DELAY seconds.
 MAX_CONNECT_RETRY_DELAY = 300
+# A host that keeps failing DNS with "name not known" this many times in a row
+# (~10 minutes with the backoff above) is a configuration error, not an outage:
+# the publisher logs one ERROR naming the setting and stops retrying (#5).
+DNS_FAILURES_BEFORE_DISABLE = 6
+
+# getaddrinfo errors meaning "this name does not exist" (not a transient
+# resolver failure such as EAI_AGAIN).
+_PERMANENT_DNS_ERRNOS = {
+    code
+    for code in (getattr(socket, "EAI_NONAME", None), getattr(socket, "EAI_NODATA", None))
+    if code is not None
+}
+
+
+def _is_placeholder_host(host: str) -> bool:
+    """True for template values such as ``192.168.1.x`` from ``.env.example``.
+
+    A dotted-quad whose non-numeric parts consist only of ``x`` or ``*`` can
+    never be a real broker address.
+    """
+    parts = host.strip().lower().split(".")
+    if len(parts) != 4:
+        return False
+    numeric = [p for p in parts if p.isdigit()]
+    others = [p for p in parts if not p.isdigit()]
+    return bool(others) and len(numeric) >= 2 and all(
+        p and set(p) <= {"x", "*"} for p in others
+    )
+
+
+def _is_permanent_dns_error(exc: BaseException) -> bool:
+    return isinstance(exc, socket.gaierror) and exc.errno in _PERMANENT_DNS_ERRNOS
 
 
 def _slugify(text: str) -> str:
@@ -32,6 +65,8 @@ class HAPublisher:
         self._connected = False
         self._should_run = False
         self._connect_retry_delay = RECONNECT_DELAY
+        self._dns_failures = 0
+        self._config_error: str | None = None
         self._lock = threading.Lock()
         # Cache of last known station data for republishing on reconnect
         self._station_cache: dict[str, StationData] = {}
@@ -40,8 +75,16 @@ class HAPublisher:
     def connected(self) -> bool:
         return self._connected
 
+    @property
+    def config_error(self) -> str | None:
+        """Why the publisher disabled itself, or None while it is active."""
+        return self._config_error
+
     def start(self):
         self._should_run = True
+        self._connect_retry_delay = RECONNECT_DELAY
+        self._dns_failures = 0
+        self._config_error = None
         self._connect()
 
     def stop(self):
@@ -183,6 +226,12 @@ class HAPublisher:
         if not host:
             log.warning("HA MQTT host not configured, publisher disabled")
             return
+        if _is_placeholder_host(host):
+            self._disable(
+                "HA_MQTT_HOST %r is a template placeholder, not a broker address"
+                % host
+            )
+            return
 
         port = int(ha_mqtt.get("port", 1883))
         username = ha_mqtt.get("username", "")
@@ -206,17 +255,40 @@ class HAPublisher:
             self._client.connect(host, port, keepalive=60)
             self._client.loop_start()
         except Exception as e:
+            if _is_permanent_dns_error(e):
+                self._dns_failures += 1
+                if self._dns_failures >= DNS_FAILURES_BEFORE_DISABLE:
+                    self._disable(
+                        "HA_MQTT_HOST %r does not resolve (%s) after %d attempts"
+                        % (host, e, self._dns_failures)
+                    )
+                    return
+            else:
+                self._dns_failures = 0
             delay = self._connect_retry_delay
             log.error("Failed to connect to HA MQTT: %s (retrying in %ds)", e, delay)
             if self._should_run:
                 self._connect_retry_delay = min(delay * 2, MAX_CONNECT_RETRY_DELAY)
                 threading.Timer(delay, self._connect).start()
 
+    def _disable(self, reason: str):
+        """Stop retrying on a configuration error, logging it once at ERROR."""
+        self._config_error = reason
+        self._client = None
+        log.error(
+            "HA MQTT configuration error: %s. Publisher disabled until restart "
+            "or until the MQTT settings are saved in the web UI. Set HA_MQTT_HOST "
+            "to the Home Assistant MQTT broker address, or leave it empty to "
+            "disable the publisher.",
+            reason,
+        )
+
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code == 0:
             log.info("Connected to HA MQTT broker")
             self._connected = True
             self._connect_retry_delay = RECONNECT_DELAY
+            self._dns_failures = 0
             # Republish cached data
             for station_data in self._station_cache.values():
                 self.publish_station_data(station_data)
