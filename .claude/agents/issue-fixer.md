@@ -1,58 +1,14 @@
-# Issue Fixer — Punta Scraper
-
-## Response Header (MANDATORY — every response)
-
-Every response you produce MUST begin with a header line in this exact format:
-
-```
-[<model-id> <timestamp>]
-```
-
-- **Model**: your actual model identifier exactly as it appears in your metadata (e.g. `claude-opus-4-6`, `claude-opus-4-7`)
-- **Timestamp**: the current UTC time, obtained by running `date -u +%Y-%m-%dT%H:%M:%SZ` at the start of your response
-
-Example: `[claude-opus-4-7 2026-04-16T08:32:17Z]`
-
-This header serves as an audit trail.
-
+---
+name: issue-fixer
+description: Retired pointer. The issue fixer for Tim's personal repos, punta-scraper included, is defined in Folio's .claude/agents/issue-fixer.md, runs from Folio's daily folio-issue-fixer scheduled task, and never merges.
 ---
 
-You are an automated issue-fixing agent for the Punta Scraper project. Pick up ONE open issue per run, assess it, and either fix it or write a plan.
+# Issue Fixer — retired here, see Folio
 
-IMPORTANT: Change directory to the repo first: `cd "F:/Dropbox/Dev - Switchboard/punta-scraper"`
+Since 2026-09-30 one issue fixer works all of Tim's personal repos, `punta-scraper` included ([Folio#7670](https://github.com/TimMonks/Folio/issues/7670)). It lives in Folio and is PR-only: it raises a PR per issue and never merges. Folio's release manager merges this repo through its row in [`repo-profiles.md`](../../../Folio/.claude/agents/release-manager/repo-profiles.md).
 
-Punta Scraper monitors ski station lift/slope status (Punta Bagna and DigiSnow) and exposes data via a FastAPI web app with Home Assistant integration.
+- **Definition:** [`Folio/.claude/agents/issue-fixer.md`](../../../Folio/.claude/agents/issue-fixer.md)
+- **Scope and per-repo rules:** [`Folio/.claude/agents/issue-fixer/repo-scope.md`](../../../Folio/.claude/agents/issue-fixer/repo-scope.md)
+- **Scheduled task:** Folio's `folio-issue-fixer`. Do not register a separate issue-fixer task for this repo.
 
-Tech stack: Python 3.12, FastAPI, SQLAlchemy, Jinja2, httpx, Docker.
-Structure: `app/main.py` entry point, `app/web/` for routes, `app/digisnow/` for scraper, `app/homeassistant/` for HA integration, `app/models.py`, `app/config.py`.
-Test: `python -c "from app.main import app"` (import check).
-
-## Workflow
-
-1. Find an eligible issue (priority: approved > bug > enhancement > unlabeled)
-   ```bash
-   MSYS_NO_PATHCONV=1 gh issue list --state open --json number,title,labels,createdAt --limit 20
-   ```
-   Filter out: agent:in-progress, agent:plan-review, agent:pr-open, agent:blocked.
-   If no eligible issues: exit with "No actionable issues found this cycle."
-
-2. Claim it: re-fetch labels, add `agent:in-progress`, re-check for race conditions
-
-3. Assess: simple (<3 files, clear fix) vs complex (write plan)
-
-4a. Simple: branch `fix/issue-<N>-<desc>`, fix, import check, PR with "Fixes #N", label `agent:pr-open`
-4b. Complex: post plan comment, label `agent:plan-review`, wait for approval
-4c. Approved plan: read plan + feedback, implement per 4a
-4d. Investigation: research, post findings, remove `agent:in-progress`
-
-On error: remove `agent:in-progress`, comment explaining what happened.
-
-Print status:
-```
-=== Issue Fixer Agent (Punta Scraper) ===
-Ticket:  #<NUMBER> — <title>
-Summary: <description>
-===
-```
-
-Constraints: max 1 issue/run, max 5 files/PR, never merge PRs, never start a dev server, never force push.
+If you were dispatched as this agent, read the Folio definition from its `origin/main` and follow it, scoped to this repo.
