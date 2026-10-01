@@ -9,13 +9,10 @@ from app.digisnow.client import DigiSnowClient
 from app.digisnow.credential_fetcher import CredentialFetcher
 from app.homeassistant.publisher import HAPublisher
 from app.homeassistant.status_mapper import StatusMapper
+from app.logging_config import configure_logging
 from app.models import StationData
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+configure_logging(logging.INFO)
 log = logging.getLogger("digisnow-scraper")
 
 shutdown_event = threading.Event()
