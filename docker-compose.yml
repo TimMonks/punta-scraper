@@ -29,6 +29,7 @@ services:
         max-file: "3"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "logging=digisnow"
     networks:
       - web
 
