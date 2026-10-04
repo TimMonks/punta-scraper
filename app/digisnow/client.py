@@ -34,6 +34,9 @@ class DigiSnowClient:
         self._connected = False
         self._lock = threading.Lock()
         self._should_run = False
+        # Set by stop() so _on_disconnect can tell a disconnect the client
+        # asked for (stop, credential refresh) from an unexpected one.
+        self._disconnect_requested = False
 
     @property
     def connected(self) -> bool:
@@ -47,6 +50,7 @@ class DigiSnowClient:
     def stop(self):
         self._should_run = False
         if self._client:
+            self._disconnect_requested = True
             self._client.loop_stop()
             self._client.disconnect()
             self._client = None
@@ -78,6 +82,7 @@ class DigiSnowClient:
                 log.info("Unsubscribed from %s", topic)
 
     def _connect(self):
+        self._disconnect_requested = False
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             transport="websockets",
@@ -118,7 +123,13 @@ class DigiSnowClient:
             self._connected = False
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
-        log.warning("Disconnected from DigiSnow MQTT: reason_code=%s", reason_code)
+        # A disconnect the client requested (stop(), credential refresh) or a
+        # normal disconnection (reason code 0) is expected: log it at INFO.
+        # Anything else (broker drop, network loss) stays a WARNING.
+        if self._disconnect_requested or reason_code == 0:
+            log.info("Disconnected from DigiSnow MQTT: reason_code=%s", reason_code)
+        else:
+            log.warning("Disconnected from DigiSnow MQTT: reason_code=%s", reason_code)
         self._connected = False
 
     def _on_message(self, client, userdata, msg):
