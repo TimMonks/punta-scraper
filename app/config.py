@@ -131,15 +131,21 @@ class Config:
         }
         for env_var, path in env_map.items():
             val = os.environ.get(env_var)
-            if val is not None:
-                if path[1] is None:
-                    self._data[path[0]] = val
-                else:
-                    if path[1] == "port":
-                        val = int(val)
-                    self._data[path[0]][path[1]] = val
+            # docker-compose passes every mapped variable as "${VAR:-}", so an
+            # unset .env entry arrives as "". Treat that as "not set": an
+            # empty value must not clobber the persisted secret_key or the
+            # MQTT settings saved from the web UI.
+            if val is None or val == "":
+                continue
+            if path[1] is None:
+                self._data[path[0]] = val
+            else:
+                if path[1] == "port":
+                    val = int(val)
+                self._data[path[0]][path[1]] = val
 
-        # Generate secret key if missing
+        # Generate the session key once; _load() persists it via _save(),
+        # so it survives restarts.
         if not self._data.get("secret_key"):
             import secrets
             self._data["secret_key"] = secrets.token_hex(32)

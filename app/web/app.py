@@ -31,7 +31,13 @@ def create_app(config, digisnow_client, ha_publisher, credential_fetcher):
         static_folder=static_folder,
         static_url_path="/static",
     )
-    app.secret_key = config.get("secret_key", default="change-me")
+    secret_key = config.get("secret_key")
+    if not secret_key:
+        raise RuntimeError(
+            "secret_key is missing from the config; "
+            "refusing to start with a guessable session key"
+        )
+    app.secret_key = secret_key
 
     # HA ingress: INGRESS_ENTRY contains the base path e.g. /api/hassio_ingress/<token>
     ingress_entry = os.environ.get("INGRESS_ENTRY", "")
