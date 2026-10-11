@@ -15,6 +15,10 @@ The web UI listens on port 8099 inside the container. The Compose file only expo
 
 `./data` is mounted at `/app/app/data` and holds `config.json`: the stations, the MQTT and status-mapping settings, the fetched DigiSnow credentials and the generated session key. It is gitignored and contains secrets, so back it up as protected state and never commit it.
 
+Saves are atomic: the new file is written beside the old one and then swapped in, so an interrupted save leaves the previous `config.json` intact.
+
+If `config.json` cannot be parsed (invalid JSON, not UTF-8, or not a JSON object), the service moves it to `config.json.corrupt-<UTC timestamp>` in the same directory, logs an ERROR naming both files, and starts with defaults. The backup contains the same secrets and is covered by the same gitignore. Restore the stations and credentials from it, then delete it. If `config.json` exists but cannot be read, or cannot be moved aside, the service logs an ERROR and refuses to start, so the file is never overwritten.
+
 ## Image, updates and rollback
 
 The image is built and pushed to `ghcr.io/timmonks/punta-scraper` by `.github/workflows/docker-publish.yml` on **every push to `main`**, with three tags:
