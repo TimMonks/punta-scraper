@@ -1,7 +1,10 @@
+import copy
 import json
 import logging
 import os
+import tempfile
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -97,20 +100,34 @@ class Config:
     def _load(self):
         if self._path.exists():
             try:
-                self._data = json.loads(self._path.read_text(encoding="utf-8"))
-                log.info("Config loaded from %s", self._path)
-            except (json.JSONDecodeError, OSError) as e:
-                log.warning("Failed to load config, using defaults: %s", e)
+                raw = self._path.read_bytes()
+            except OSError as e:
+                log.error(
+                    "Cannot read config %s: %s; not starting, so the file is "
+                    "not overwritten", self._path, e)
+                raise RuntimeError(f"Cannot read config {self._path}") from e
+            try:
+                data = json.loads(raw.decode("utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError(
+                        f"top level is {type(data).__name__}, not an object")
+            except ValueError as e:
+                # JSONDecodeError and UnicodeDecodeError are ValueErrors.
+                self._quarantine(e)
                 self._data = {}
+            else:
+                self._data = data
+                log.info("Config loaded from %s", self._path)
 
-        # Merge defaults for missing keys
+        # Merge defaults for missing keys. Copy them, so later edits to the
+        # loaded config never change DEFAULT_CONFIG itself.
         for key, default in DEFAULT_CONFIG.items():
             if key not in self._data:
-                self._data[key] = default
+                self._data[key] = copy.deepcopy(default)
             elif isinstance(default, dict):
                 for sub_key, sub_default in default.items():
                     if sub_key not in self._data[key]:
-                        self._data[key][sub_key] = sub_default
+                        self._data[key][sub_key] = copy.deepcopy(sub_default)
 
         # Apply environment variable overrides
         self._apply_env_overrides()
@@ -120,6 +137,26 @@ class Config:
             self._apply_ha_addon_overrides()
 
         self._save()
+
+    def _quarantine(self, error: Exception) -> Path:
+        """Move an unparsable config aside so it is never overwritten."""
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = self._path.with_name(f"{self._path.name}.corrupt-{stamp}")
+        try:
+            self._path.replace(backup)
+        except OSError as rename_error:
+            log.error(
+                "Config %s is unreadable (%s) and could not be moved aside "
+                "(%s); not starting, so the file is not overwritten",
+                self._path, error, rename_error)
+            raise RuntimeError(
+                f"Cannot move unreadable config {self._path} aside"
+            ) from rename_error
+        log.error(
+            "Config %s is unreadable (%s); moved it to %s and started with "
+            "defaults. Restore stations and credentials from the backup.",
+            self._path, error, backup)
+        return backup
 
     def _apply_env_overrides(self):
         env_map = {
@@ -175,11 +212,22 @@ class Config:
             log.info("Auto-configured stations: %s", options["stations"])
 
     def _save(self):
+        """Write the config atomically: a failed save keeps the old file."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            json.dumps(self._data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        fd, tmp = tempfile.mkstemp(dir=self._path.parent,
+                                   prefix=self._path.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(self._data, indent=2, ensure_ascii=False))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
 
     def get(self, *keys: str, default: Any = None) -> Any:
         with self._lock:
