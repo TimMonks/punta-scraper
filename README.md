@@ -21,7 +21,7 @@ If `config.json` cannot be parsed (invalid JSON, not UTF-8, or not a JSON object
 
 ## Image, updates and rollback
 
-The image is built and pushed to `ghcr.io/timmonks/punta-scraper` by `.github/workflows/docker-publish.yml` on **every push to `main`**, with three tags:
+The image is built and pushed to `ghcr.io/timmonks/punta-scraper` by `.github/workflows/docker-publish.yml` on **every push to `main`**, but only after the workflow's `test` job (`python -m pytest tests -q`) passes. It carries three tags:
 
 | Tag | Moves? | Use |
 |---|---|---|
@@ -29,7 +29,7 @@ The image is built and pushed to `ghcr.io/timmonks/punta-scraper` by `.github/wo
 | the add-on version from `digisnow-scraper/config.yaml` (for example `1.4.0`) | Yes, re-pushed on every push until the version is bumped | Not a reliable rollback target. |
 | the short commit SHA (7 characters) | No | The rollback and pinning target. |
 
-The workflow runs no tests before it pushes.
+The `test` job runs the suite on every pull request to `main` and before every image push, and a failing suite publishes no image. Pull-request runs only test and never push.
 
 **Update mode: `auto`.** The service carries `com.centurylinklabs.watchtower.enable=true`, so the host's Watchtower pulls a new `latest` and recreates the container. Every merge to `main` therefore reaches the deployment without a separate release step. Whether that channel meets the own-app prerequisites of the Bella container policy, or needs a recorded owner exception, is open on [issue #24](https://github.com/TimMonks/punta-scraper/issues/24).
 
@@ -45,3 +45,5 @@ Logs are JSON lines on stdout (`LOG_FORMAT=json`), rotated by the Docker `json-f
 pip install -r requirements.txt pytest
 python -m pytest tests -q
 ```
+
+CI runs the same command on every pull request and before every image push (`.github/workflows/docker-publish.yml`, job `test`).
