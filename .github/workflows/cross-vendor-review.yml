@@ -1,0 +1,230 @@
+# Cross-vendor review gate. Canonical copy: TimMonks/agent-coding-rules
+# templates/workflows/cross-vendor-review.yml; see docs/cross-vendor-review.md.
+# Copy this file unchanged to .github/workflows/cross-vendor-review.yml.
+#
+# A PR that touches an agent trust path needs a review comment from an agent of
+# a different vendor (claude, codex or antigravity) than the PR's author. The
+# verdict is the commit status "cross-vendor-review" on the PR head, which the
+# repository ruleset requires.
+#
+# pull_request_target and issue_comment both run this file from the default
+# branch, so a PR cannot weaken its own gate. No PR code is checked out or run.
+# Only PR comments count: native PR reviews raise pull_request_review, which runs
+# the PR's own copy of a workflow, so they are not read.
+name: cross-vendor-review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  statuses: write
+
+concurrency:
+  group: cross-vendor-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  verdict:
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Decide and post the cross-vendor-review status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from datetime import datetime
+
+          CONTEXT = "cross-vendor-review"
+          # Paths that instruct, wire or check agents, in every repository.
+          TRUST_PATHS = [
+              ".github/**",
+              "agents/**",
+              "hooks/**",
+              "agent_rules/**",
+              "docs/shared-agent-rules.md",
+              "scripts/duty_*.py",
+              "scripts/check_local_rules.py",
+              # The Infisical agent configuration and credential templates on Bella.
+              "scripts/infisical/**",
+              # Procedure files scheduled agents run from, wherever a repository keeps them.
+              "**/agent-procedures/**",
+              "**/AGENTS.md",
+              "**/CLAUDE.md",
+              "**/GEMINI.md",
+              "**/CHARTER.md",
+              "**/.agent-coding-rules.json",
+              "**/.mcp.json",
+              "**/.claude/**",
+              "**/.codex/**",
+              "**/.codex-plugin/**",
+              "**/.gemini/**",
+              "**/.cursor/**",
+          ]
+          # Further paths per repository, from an audit of each default branch on 2026-11-02:
+          # every file that instructs, wires or checks an agent, or handles its credentials.
+          REPO_TRUST_PATHS = {
+              # The canonical rules, their documentation, the hook installation templates
+              # and the identity and approval helpers agents run.
+              "TimMonks/agent-coding-rules": [
+                  "rules/**",
+                  "docs/**",
+                  "templates/**",
+                  "scripts/**",
+                  "README.md",
+                  "materiality.json",
+                  "pyproject.toml",
+              ],
+              # Agent setup, secrets, scheduling and onboarding procedures, the scripts that
+              # agents and their duties run (including the credential helpers), and policy.
+              "TimMonks/infra": ["README.md", "docs/**", "scripts/**", "policy/**"],
+              # The Claude desktop client and the Codex agent adapter generator.
+              "TimMonks/Folio": ["clients/claude-desktop/**", "scripts/generate_codex_agent_adapters.py"],
+              # The Infisical agent that renders credentials for the Life containers.
+              "TimMonks/Life": ["compose.infisical.yml"],
+              # The messaging protocol and the approval service are agent trust in full.
+              "TimMonks/infra-ntfy": ["**"],
+              "TimMonks/infra-approval": ["**"],
+              # The Codex Home Assistant plugin and the policies the shared rules route agents to.
+              "TimMonks/homelab-docs": [
+                  "home-automation/codex-home-assistant-plugin/**",
+                  "security/credential-handover.md",
+                  "security/secrets-tiers.md",
+                  "services-and-media/approval-pilot.md",
+                  "services-and-media/bella-container-policy.md",
+                  "services-and-media/personal-agents.md",
+              ],
+          }
+          # The GitHub account the agents post as; a review comment from any other account
+          # is ignored, whatever its header says.
+          REVIEWER_LOGINS = {"bertmonks"}
+          KNOWN_VENDORS = {"bert-vm1": "claude"}
+          HEADER = re.compile(r"^\U0001F916 \*\*([a-z0-9][a-z0-9-]*)\*\*\s*$")
+
+
+          def glob_regex(pattern):
+              out, i = "", 0
+              while i < len(pattern):
+                  if pattern.startswith("**/", i):
+                      out, i = out + "(?:.*/)?", i + 3
+                  elif pattern.startswith("**", i):
+                      out, i = out + ".*", i + 2
+                  elif pattern[i] == "*":
+                      out, i = out + "[^/]*", i + 1
+                  else:
+                      out, i = out + re.escape(pattern[i]), i + 1
+              return re.compile(out + r"\Z")
+
+
+          def trust_files(repo, paths):
+              regexes = [glob_regex(p) for p in TRUST_PATHS + REPO_TRUST_PATHS.get(repo, [])]
+              return sorted(p for p in paths if any(r.match(p) for r in regexes))
+
+
+          def vendor(agent):
+              if agent in KNOWN_VENDORS:
+                  return KNOWN_VENDORS[agent]
+              for name in ("antigravity", "codex", "claude"):
+                  if name in agent:
+                      return name
+              return None
+
+
+          def header_agent(body):
+              for line in (body or "").splitlines():
+                  if line.strip():
+                      m = HEADER.match(line.strip())
+                      return m.group(1) if m else None
+              return None
+
+
+          def parse_time(value):
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+          def find_review(number, author_vendor, comments, since):
+              marker = f"**Review of PR #{number}**"
+              for c in comments:
+                  if (c.get("user") or {}).get("login") not in REVIEWER_LOGINS:
+                      continue
+                  agent = header_agent(c.get("body"))
+                  if not agent or vendor(agent) in (None, author_vendor):
+                      continue
+                  lines = [line.strip() for line in (c.get("body") or "").splitlines() if line.strip()]
+                  if marker not in lines[1:3]:
+                      continue
+                  if since and parse_time(c["created_at"]) < since:
+                      continue
+                  return agent
+              return None
+
+
+          def decide(repo, number, pr_body, files, comments, since):
+              touched = trust_files(repo, files)
+              if not touched:
+                  return "success", "No agent trust path touched"
+              author = header_agent(pr_body)
+              if not author:
+                  return "failure", "Trust path touched; PR body lacks the robot agent header"
+              author_vendor = vendor(author)
+              if not author_vendor:
+                  return "failure", f"Trust path touched; unknown vendor for author {author}"
+              reviewer = find_review(number, author_vendor, comments, since)
+              if reviewer:
+                  return "success", f"Reviewed by {reviewer} ({vendor(reviewer)}), author {author} ({author_vendor})"
+              return "failure", f"Trust path touched ({touched[0]}); needs a review by a non-{author_vendor} agent"
+
+
+          def gh(*args):
+              return subprocess.run(["gh", "api", *args], check=True, capture_output=True, text=True).stdout
+
+
+          def gh_pages(path):
+              return [item for page in json.loads(gh("--paginate", "--slurp", path)) for item in page]
+
+
+          def main():
+              repo, number = os.environ["REPO"], int(os.environ["PR"])
+              pr = json.loads(gh(f"repos/{repo}/pulls/{number}"))
+              if pr["state"] != "open":
+                  print("PR is not open; nothing to do")
+                  return
+              sha = pr["head"]["sha"]
+              statuses = [s for s in gh_pages(f"repos/{repo}/commits/{sha}/statuses?per_page=100") if s["context"] == CONTEXT]
+              if statuses:
+                  since = min(parse_time(s["created_at"]) for s in statuses)
+              else:
+                  # First evaluation of this head: record it as seen. GitHub's timestamp on
+                  # that first status is the boundary, now and on every later run, so a review
+                  # of an earlier head never counts, whatever date the commit carries.
+                  seen = json.loads(gh("-X", "POST", f"repos/{repo}/statuses/{sha}", "-f", "state=pending",
+                                       "-f", f"context={CONTEXT}", "-f", "description=Evaluating",
+                                       "-f", f"target_url={os.environ['RUN_URL']}"))
+                  since = parse_time(seen["created_at"])
+              files = []
+              for f in gh_pages(f"repos/{repo}/pulls/{number}/files?per_page=100"):
+                  files.append(f["filename"])
+                  if f.get("previous_filename"):
+                      files.append(f["previous_filename"])
+              comments = gh_pages(f"repos/{repo}/issues/{number}/comments?per_page=100")
+              state, description = decide(repo, number, pr["body"], files, comments, since)
+              print(f"{state}: {description}")
+              gh("-X", "POST", f"repos/{repo}/statuses/{sha}", "-f", f"state={state}",
+                 "-f", f"context={CONTEXT}", "-f", f"description={description[:140]}",
+                 "-f", f"target_url={os.environ['RUN_URL']}")
+
+
+          if __name__ == "__main__":
+              main()
+          PY
