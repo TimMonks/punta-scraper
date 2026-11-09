@@ -191,6 +191,52 @@ def test_stale_connect_failure_cannot_schedule_retry(case):
     assert not env.timers
 
 
+@pytest.mark.parametrize("restart", [False, True])
+def test_other_thread_retires_blocking_connect(case, restart):
+    entered, release, retired = (threading.Event() for _ in range(3))
+    errors = []
+
+    def blocked_connect(client):
+        entered.set()
+        if not release.wait(3):
+            errors.append("connect was not released")
+
+    def retire():
+        try:
+            case.target.stop()
+            if restart:
+                case.start()
+        except Exception as error:
+            errors.append(error)
+        finally:
+            retired.set()
+
+    case.network.outcomes.append(blocked_connect)
+    attempt = threading.Thread(target=case.start, daemon=True)
+    attempt.start()
+    assert entered.wait(1)
+    stopper = threading.Thread(target=retire, daemon=True)
+    stopper.start()
+    try:
+        assert retired.wait(1), "connect held the lifecycle lock"
+    finally:
+        release.set()
+        attempt.join(2)
+        stopper.join(2)
+    assert not errors
+    assert not attempt.is_alive() and not stopper.is_alive()
+    old = case.network.clients[0]
+    assert old.disconnected and old.loop_starts == 0
+    if restart:
+        current = case.network.clients[-1]
+        assert case.target._client is current
+        assert current.loop_starts == 1
+    else:
+        assert case.target._client is None
+    case.target.stop()
+    assert not any(client.running for client in case.network.clients)
+
+
 def test_retired_callbacks_do_not_mutate_current_lifecycle(case, monkeypatch):
     target, env = case.target, case.network
     case.start()
