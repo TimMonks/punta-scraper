@@ -182,13 +182,10 @@ class DigiSnowClient:
             self._connected = False
 
     def _on_message(self, client, userdata, msg):
-        with self._lock:
-            if not self._owns(client):
-                return
-            self._handle_message(msg)
-
-    def _handle_message(self, msg):
         try:
+            with self._lock:
+                if not self._owns(client):
+                    return
             # Extract station_id from topic: poulpe/DigiSnow/{station_id}/assets/all
             parts = msg.topic.split("/")
             if len(parts) >= 3:
@@ -199,9 +196,15 @@ class DigiSnowClient:
 
             payload = json.loads(msg.payload.decode("utf-8"))
             station_data = parse_assets(station_id, payload)
-
-            if self._on_station_update:
-                self._on_station_update(station_data)
+            with self._lock:
+                if not self._owns(client):
+                    return
+                callback = self._on_station_update
+            # Admission belongs to the current client. An admitted callback
+            # may finish after stop; run user code without the lifecycle lock
+            # so it can itself stop/restart without holding a lock during join.
+            if callback:
+                callback(station_data)
 
         except Exception as e:
             log.error("Error processing DigiSnow message: %s", e, exc_info=True)

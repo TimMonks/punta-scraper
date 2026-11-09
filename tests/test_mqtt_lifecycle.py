@@ -298,6 +298,54 @@ def test_current_retry_connects_and_is_consumed_once(case):
     assert not target.connected
 
 
+def test_station_callback_can_stop_without_holding_lifecycle_lock(network, monkeypatch):
+    acquired = threading.Event()
+    delivered = []
+    monkeypatch.setattr(digisnow, "parse_assets", lambda *args: object())
+    target = digisnow.DigiSnowClient("user", "password")
+
+    def acquire_on_other_thread():
+        with target._lock:
+            acquired.set()
+
+    def cleanup():
+        thread = threading.Thread(target=acquire_on_other_thread, daemon=True)
+        thread.start()
+        try:
+            assert acquired.wait(1), "user callback retained lifecycle lock"
+        finally:
+            thread.join(1)
+
+    def update(data):
+        target.stop()
+        delivered.append(data)
+
+    target._on_station_update = update
+    target.start(["station-a"])
+    current = target._client
+    current.cleanup_hook = cleanup
+    message = SimpleNamespace(topic="poulpe/DigiSnow/station-a/assets/all", payload=b"{}")
+    current.on_message(current, None, message)
+    assert acquired.is_set() and len(delivered) == 1
+    assert target._client is None and not current.running
+
+
+def test_retirement_during_message_parse_prevents_delivery(network, monkeypatch):
+    delivered = []
+    target = digisnow.DigiSnowClient("user", "password", delivered.append)
+
+    def parse_then_stop(*args):
+        target.stop()
+        return object()
+
+    monkeypatch.setattr(digisnow, "parse_assets", parse_then_stop)
+    target.start(["station-a"])
+    current = target._client
+    message = SimpleNamespace(topic="poulpe/DigiSnow/station-a/assets/all", payload=b"{}")
+    current.on_message(current, None, message)
+    assert delivered == []
+
+
 def test_cleanup_does_not_hold_lifecycle_lock(case):
     case.start()
     acquired = threading.Event()
