@@ -46,6 +46,8 @@ The `test` job runs the suite on every pull request to `main` and before every i
 
 Logs are JSON lines on stdout (`LOG_FORMAT=json`), rotated by the Docker `json-file` driver and labelled `logging=digisnow` for Loki. `GET /api/health` (no login) reports whether the DigiSnow and MQTT connections are up.
 
+Shutdown cancels pending MQTT retries and retires connection attempts already in progress. Saving MQTT settings or refreshing DigiSnow credentials starts a new connection lifecycle; callbacks from the previous connection cannot restart it or change the new connection's health. Existing retry delays and invalid-host handling are unchanged.
+
 ## Tests
 
 ```bash
