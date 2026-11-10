@@ -67,7 +67,9 @@ class HAPublisher:
         self._connect_retry_delay = RECONNECT_DELAY
         self._dns_failures = 0
         self._config_error: str | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._generation = 0
+        self._retry_timer: threading.Timer | None = None
         # Cache of last known station data for republishing on reconnect
         self._station_cache: dict[str, StationData] = {}
 
@@ -81,22 +83,46 @@ class HAPublisher:
         return self._config_error
 
     def start(self):
-        self._should_run = True
-        self._connect_retry_delay = RECONNECT_DELAY
-        self._dns_failures = 0
-        self._config_error = None
-        self._connect()
+        with self._lock:
+            old_client = self._retire_locked()
+            self._should_run = True
+            self._connect_retry_delay = RECONNECT_DELAY
+            self._dns_failures = 0
+            self._config_error = None
+            generation = self._generation
+        self._dispose(old_client)
+        self._connect(generation)
 
     def stop(self):
-        self._should_run = False
-        if self._client:
-            self._client.loop_stop()
-            self._client.disconnect()
-            self._client = None
+        with self._lock:
+            self._should_run = False
+            old_client = self._retire_locked()
+        self._dispose(old_client)
+
+    def _retire_locked(self):
+        """Invalidate attempts before detaching; the caller holds _lock."""
+        self._generation += 1
+        if self._retry_timer is not None:
+            self._retry_timer.cancel()
+            self._retry_timer = None
+        old_client, self._client = self._client, None
         self._connected = False
+        return old_client
+
+    @staticmethod
+    def _dispose(client):
+        # loop_stop can join a callback thread: never hold _lock here.
+        if client is not None:
+            client.loop_stop()
+            client.disconnect()
 
     def publish_station_data(self, station_data: StationData):
         """Publish lift/slope status updates to HA MQTT broker."""
+        with self._lock:
+            self._publish_station_data(station_data)
+
+    def _publish_station_data(self, station_data: StationData):
+        # Keep publication on the same current client until it is complete.
         self._station_cache[station_data.station_id] = station_data
 
         if not self._connected:
@@ -220,61 +246,87 @@ class HAPublisher:
 
         self._client.publish(attrs_topic, json.dumps(attrs), retain=True)
 
-    def _connect(self):
-        ha_mqtt = self._config.get("ha_mqtt", default={})
-        host = ha_mqtt.get("host", "")
-        if not host:
-            log.warning("HA MQTT host not configured, publisher disabled")
-            return
-        if _is_placeholder_host(host):
-            self._disable(
-                "HA_MQTT_HOST %r is a template placeholder, not a broker address"
-                % host
+    def _connect(self, generation):
+        with self._lock:
+            if (not self._should_run or generation != self._generation
+                    or self._client is not None):
+                return
+            ha_mqtt = self._config.get("ha_mqtt", default={})
+            host = ha_mqtt.get("host", "")
+            if not host:
+                log.warning("HA MQTT host not configured, publisher disabled")
+                return
+            if _is_placeholder_host(host):
+                self._disable(
+                    "HA_MQTT_HOST %r is a template placeholder, not a broker address"
+                    % host
+                )
+                return
+            port = int(ha_mqtt.get("port", 1883))
+            username = ha_mqtt.get("username", "")
+            password = ha_mqtt.get("password", "")
+            client = mqtt.Client(
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             )
-            return
-
-        port = int(ha_mqtt.get("port", 1883))
-        username = ha_mqtt.get("username", "")
-        password = ha_mqtt.get("password", "")
-
-        self._client = mqtt.Client(
-            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        )
-        if username:
-            self._client.username_pw_set(username, password)
-
-        self._client.on_connect = self._on_connect
-        self._client.on_disconnect = self._on_disconnect
-
-        self._client.reconnect_delay_set(
-            min_delay=RECONNECT_DELAY, max_delay=60
-        )
-
+            if username:
+                client.username_pw_set(username, password)
+            client.on_connect = self._on_connect
+            client.on_disconnect = self._on_disconnect
+            client.reconnect_delay_set(min_delay=RECONNECT_DELAY, max_delay=60)
+            self._client = client
         try:
             log.info("Connecting to HA MQTT broker %s:%d", host, port)
-            self._client.connect(host, port, keepalive=60)
-            self._client.loop_start()
-        except Exception as e:
-            if _is_permanent_dns_error(e):
-                self._dns_failures += 1
-                if self._dns_failures >= DNS_FAILURES_BEFORE_DISABLE:
-                    self._disable(
-                        "HA_MQTT_HOST %r does not resolve (%s) after %d attempts"
-                        % (host, e, self._dns_failures)
-                    )
+            client.connect(host, port, keepalive=60)
+            with self._lock:
+                if self._owns(client, generation):
+                    # Atomic with stop; connect itself never holds _lock.
+                    client.loop_start()
                     return
-            else:
-                self._dns_failures = 0
-            delay = self._connect_retry_delay
-            log.error("Failed to connect to HA MQTT: %s (retrying in %ds)", e, delay)
-            if self._should_run:
-                self._connect_retry_delay = min(delay * 2, MAX_CONNECT_RETRY_DELAY)
-                threading.Timer(delay, self._connect).start()
+        except Exception as e:
+            with self._lock:
+                if self._owns(client, generation):
+                    self._client = None
+                    self._connected = False
+                    self._connect_failed(host, e, generation)
+        self._dispose(client)
+
+    def _connect_failed(self, host, error, generation):
+        """Apply the existing retry policy while holding the lifecycle lock."""
+        if _is_permanent_dns_error(error):
+            self._dns_failures += 1
+            if self._dns_failures >= DNS_FAILURES_BEFORE_DISABLE:
+                self._disable(
+                    "HA_MQTT_HOST %r does not resolve (%s) after %d attempts"
+                    % (host, error, self._dns_failures)
+                )
+                return
+        else:
+            self._dns_failures = 0
+        delay = self._connect_retry_delay
+        log.error("Failed to connect to HA MQTT: %s (retrying in %ds)", error, delay)
+        self._connect_retry_delay = min(delay * 2, MAX_CONNECT_RETRY_DELAY)
+        timer = threading.Timer(delay, lambda: self._retry(generation, timer))
+        timer.daemon = True
+        self._retry_timer = timer
+        timer.start()
+
+    def _owns(self, client, generation=None):
+        return (self._should_run and self._client is client
+                and (generation is None or generation == self._generation))
+
+    def _retry(self, generation, timer):
+        with self._lock:
+            if (not self._should_run or generation != self._generation
+                    or self._retry_timer is not timer):
+                return
+            self._retry_timer = None
+        self._connect(generation)
 
     def _disable(self, reason: str):
-        """Stop retrying on a configuration error, logging it once at ERROR."""
+        """Disable under _lock, after the failed attempt has been detached."""
+        self._should_run = False
+        self._retire_locked()
         self._config_error = reason
-        self._client = None
         log.error(
             "HA MQTT configuration error: %s. Publisher disabled until restart "
             "or until the MQTT settings are saved in the web UI. Set HA_MQTT_HOST "
@@ -284,18 +336,23 @@ class HAPublisher:
         )
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
-        if reason_code == 0:
-            log.info("Connected to HA MQTT broker")
-            self._connected = True
-            self._connect_retry_delay = RECONNECT_DELAY
-            self._dns_failures = 0
-            # Republish cached data
-            for station_data in self._station_cache.values():
-                self.publish_station_data(station_data)
-        else:
-            log.error("HA MQTT connect failed: reason_code=%s", reason_code)
-            self._connected = False
+        with self._lock:
+            if not self._owns(client):
+                return
+            if reason_code == 0:
+                log.info("Connected to HA MQTT broker")
+                self._connected = True
+                self._connect_retry_delay = RECONNECT_DELAY
+                self._dns_failures = 0
+                for station_data in self._station_cache.values():
+                    self.publish_station_data(station_data)
+            else:
+                log.error("HA MQTT connect failed: reason_code=%s", reason_code)
+                self._connected = False
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
-        log.warning("Disconnected from HA MQTT: reason_code=%s", reason_code)
-        self._connected = False
+        with self._lock:
+            if not self._owns(client):
+                return
+            log.warning("Disconnected from HA MQTT: reason_code=%s", reason_code)
+            self._connected = False
