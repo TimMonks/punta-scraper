@@ -3,7 +3,8 @@
 # Copy this file unchanged to .github/workflows/cross-vendor-review.yml.
 #
 # A PR that touches an agent trust path needs a review comment from an agent of
-# a different vendor (claude, codex or antigravity) than the PR's author. The
+# a different vendor (claude, codex or antigravity) than the PR's author, or an
+# attributed independent-subagent fallback when other reviewers are unavailable. The
 # verdict is the commit status "cross-vendor-review" on the PR head, which the
 # repository ruleset requires.
 #
@@ -153,24 +154,55 @@ jobs:
               return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-          def find_review(number, author_vendor, comments, since):
+          def independent_fallback(lines, head_sha):
+              """Validate the requester's attestation, not the subagent's identity itself."""
+              required = {
+                  "Reviewed head", "Review mode", "Subagent reviewer",
+                  "Independence", "Fallback evidence",
+              }
+              fields = {}
+              for line in lines:
+                  key, sep, value = line.partition(":")
+                  if sep and key in required:
+                      if key in fields or not value.strip():
+                          return False
+                      fields[key] = value.strip()
+              return (
+                  fields.keys() == required
+                  and re.fullmatch(r"[0-9a-f]{40}", head_sha or "") is not None
+                  and fields["Reviewed head"] == head_sha
+                  and fields["Review mode"] == "independent-subagent"
+                  and fields["Independence"] == "fresh context; read-only; no implementation contribution"
+              )
+
+
+          def find_review(number, author_vendor, comments, since, head_sha=None):
               marker = f"**Review of PR #{number}**"
               for c in comments:
                   if (c.get("user") or {}).get("login") not in REVIEWER_LOGINS:
                       continue
                   agent = header_agent(c.get("body"))
-                  if not agent or vendor(agent) in (None, author_vendor):
+                  if not agent or vendor(agent) is None:
                       continue
                   lines = [line.strip() for line in (c.get("body") or "").splitlines() if line.strip()]
                   if marker not in lines[1:3]:
                       continue
                   if since and parse_time(c["created_at"]) < since:
                       continue
+                  fallback = any(line.startswith(("Review mode:", "Subagent reviewer:", "Fallback evidence:")) for line in lines)
+                  if fallback:
+                      # The parent posts truthfully under its own identity. Exact-head,
+                      # attributed evidence is mandatory even for a different vendor.
+                      if lines[1] != marker or not independent_fallback(lines, head_sha):
+                          continue
+                      return f"{agent} / independent subagent"
+                  if vendor(agent) == author_vendor:
+                      continue
                   return agent
               return None
 
 
-          def decide(repo, number, pr_body, files, comments, since):
+          def decide(repo, number, pr_body, files, comments, since, head_sha=None):
               touched = trust_files(repo, files)
               if not touched:
                   return "success", "No agent trust path touched"
@@ -180,10 +212,10 @@ jobs:
               author_vendor = vendor(author)
               if not author_vendor:
                   return "failure", f"Trust path touched; unknown vendor for author {author}"
-              reviewer = find_review(number, author_vendor, comments, since)
+              reviewer = find_review(number, author_vendor, comments, since, head_sha)
               if reviewer:
                   return "success", f"Reviewed by {reviewer} ({vendor(reviewer)}), author {author} ({author_vendor})"
-              return "failure", f"Trust path touched ({touched[0]}); needs a review by a non-{author_vendor} agent"
+              return "failure", f"Trust path touched ({touched[0]}); needs non-{author_vendor} review or independent-subagent fallback"
 
 
           def gh(*args):
@@ -218,7 +250,7 @@ jobs:
                   if f.get("previous_filename"):
                       files.append(f["previous_filename"])
               comments = gh_pages(f"repos/{repo}/issues/{number}/comments?per_page=100")
-              state, description = decide(repo, number, pr["body"], files, comments, since)
+              state, description = decide(repo, number, pr["body"], files, comments, since, sha)
               print(f"{state}: {description}")
               gh("-X", "POST", f"repos/{repo}/statuses/{sha}", "-f", f"state={state}",
                  "-f", f"context={CONTEXT}", "-f", f"description={description[:140]}",
